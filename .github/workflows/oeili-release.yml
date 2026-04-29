@@ -106,20 +106,30 @@ jobs:
           # Both GoBackend (7) and ProxyGoBackend (6) symbols must be present
           # — the JVM resolves all static native methods at class-load time,
           # not lazily, so any missing symbol crashes AbstractBackend init.
-          REQUIRED='awgVersion awgTurnOn awgTurnOff awgGetSocketV4 awgGetSocketV6 awgGetConfig awgUpdateTunnelPeers awgStartProxy awgUpdateProxyTunnelPeers awgStopProxy awgGetProxyConfig awgSetSocketProtector awgResetJNIGlobals'
+          # JNI-mangled symbol names are Java_<class-path>_<method>, e.g.
+          # `Java_org_amnezia_awg_GoBackend_awgVersion`.
+          NM="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          ALL_SYMS=$("$NM" -D --defined-only "$SO" | awk '{print $NF}')
+          declare -A REQUIRED
+          for sym in awgVersion awgTurnOn awgTurnOff awgGetSocketV4 awgGetSocketV6 awgGetConfig awgUpdateTunnelPeers; do
+            REQUIRED[Java_org_amnezia_awg_GoBackend_${sym}]=1
+          done
+          for sym in awgStartProxy awgUpdateProxyTunnelPeers awgStopProxy awgGetProxyConfig awgSetSocketProtector awgResetJNIGlobals; do
+            REQUIRED[Java_org_amnezia_awg_ProxyGoBackend_${sym}]=1
+          done
           MISSING=""
-          for sym in $REQUIRED; do
-            if ! nm -D --defined-only "$SO" 2>/dev/null | grep -q " $sym$"; then
-              if ! "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D --defined-only "$SO" | grep -q " $sym$"; then
-                MISSING="$MISSING $sym"
-              fi
+          for sym in "${!REQUIRED[@]}"; do
+            if ! grep -qx "$sym" <<<"$ALL_SYMS"; then
+              MISSING="$MISSING $sym"
             fi
           done
           if [ -n "$MISSING" ]; then
             echo "ERROR: libam-go.so missing required JNI symbols:$MISSING" >&2
+            echo "Symbols actually exported:" >&2
+            echo "$ALL_SYMS" | grep -E "^Java_org_amnezia" >&2 || echo "  (none with Java_org_amnezia prefix)" >&2
             exit 1
           fi
-          echo "✓ all 13 JNI symbols present in libam-go.so"
+          echo "✓ all 13 required JNI symbols present in libam-go.so"
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
