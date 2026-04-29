@@ -27,6 +27,14 @@ android {
     // fix okhttp proguard issue
     packaging { resources { pickFirsts.add("okhttp3/internal/publicsuffix/publicsuffixes.gz") } }
 
+    // PRD DivMode/catchseo#1618 (Phase A): replace amneziawg-go's
+    // libam-go.so with our Rust GotaTun build dropped into
+    // app/src/main/jniLibs/. Without pickFirst, Gradle errors on the
+    // duplicate native lib coming from the amneziawg-android Maven AAR.
+    // app's jniLibs is iterated first in the merge, so picking-first
+    // means our Rust .so wins over the bundled Go one.
+    packaging { jniLibs { pickFirsts.add("**/libam-go.so") } }
+
     splits {
         abi {
             isEnable = !project.hasProperty("noSplits")

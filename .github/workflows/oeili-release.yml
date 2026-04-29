@@ -12,6 +12,7 @@ on:
   push:
     branches:
       - oeili-main
+      - gotatun-rust-dataplane
   workflow_dispatch:
 
 jobs:
@@ -31,6 +32,83 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
+
+      # ── Build Rust dataplane (PRD DivMode/catchseo#1618) ────────────
+      # Replace amneziawg-go's Go-based libam-go.so with our GotaTun
+      # (Rust) implementation for ~3× single-stream throughput on phone.
+      # The .so we produce is dropped into app/src/main/jniLibs/ so it
+      # wins over the one bundled in the amneziawg-android Maven AAR.
+      - name: Set up Rust toolchain (aarch64-linux-android)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            /tmp/gotatun/target
+          key: gotatun-rust-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-ndk
+        run: cargo install --locked cargo-ndk
+
+      - name: Set up Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26b
+          add-to-path: false
+
+      - name: Clone DivMode/gotatun fork (Rust dataplane)
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/gotatun
+          git clone --branch gotatun-android-jni --depth 1 \
+            https://github.com/DivMode/gotatun.git /tmp/gotatun
+
+      - name: Build libam-go.so via cargo-ndk
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          cd /tmp/gotatun
+          cargo ndk -t arm64-v8a -p 24 -- build \
+            -p gotatun-android-jni --release --no-default-features
+          # cargo's [lib].name = "am_go" produces libam_go.so but the
+          # Kotlin side calls ReLinker.loadLibrary(context, "am-go") which
+          # looks for libam-go.so. Rename on copy. Also `cargo ndk -t arm64-v8a`
+          # outputs to target/aarch64-linux-android/release/.
+          mkdir -p "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a"
+          cp target/aarch64-linux-android/release/libam_go.so \
+             "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libam-go.so"
+          ls -la "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/"
+
+      - name: Verify Rust .so contains the JNI symbols Kotlin needs
+        run: |
+          set -euo pipefail
+          SO="$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libam-go.so"
+          # Both GoBackend (7) and ProxyGoBackend (6) symbols must be present
+          # — the JVM resolves all static native methods at class-load time,
+          # not lazily, so any missing symbol crashes AbstractBackend init.
+          REQUIRED='awgVersion awgTurnOn awgTurnOff awgGetSocketV4 awgGetSocketV6 awgGetConfig awgUpdateTunnelPeers awgStartProxy awgUpdateProxyTunnelPeers awgStopProxy awgGetProxyConfig awgSetSocketProtector awgResetJNIGlobals'
+          MISSING=""
+          for sym in $REQUIRED; do
+            if ! nm -D --defined-only "$SO" 2>/dev/null | grep -q " $sym$"; then
+              if ! "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D --defined-only "$SO" | grep -q " $sym$"; then
+                MISSING="$MISSING $sym"
+              fi
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "ERROR: libam-go.so missing required JNI symbols:$MISSING" >&2
+            exit 1
+          fi
+          echo "✓ all 13 JNI symbols present in libam-go.so"
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
       - name: Build standalone debug APK
         run: ./gradlew :app:assembleStandaloneDebug --stacktrace
