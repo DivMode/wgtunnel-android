@@ -39,11 +39,23 @@ jobs:
         id: locate
         run: |
           set -euo pipefail
-          APK_PATH=$(find app/build/outputs/apk/standalone/debug -name '*.apk' -type f | head -1)
+          # Pick the arm64-v8a variant explicitly — Pixel 7 / Pixel 8 /
+          # Galaxy S24+ / S26+ are all 64-bit-only (Tensor G2+ and SD 8 Gen 2+
+          # dropped armeabi-v7a support on Android 13+). The standalone flavor
+          # builds per-ABI APKs; an alphabetical `head -1` picks armeabi-v7a,
+          # which fails to install on those phones with
+          # INSTALL_FAILED_NO_MATCHING_ABIS / res=-113.
+          APK_PATH=$(find app/build/outputs/apk/standalone/debug -name '*arm64-v8a*.apk' -type f | head -1)
           if [ -z "$APK_PATH" ]; then
-            echo "ERROR: no APK produced" >&2
+            APK_PATH=$(find app/build/outputs/apk/standalone/debug -name '*universal*.apk' -type f | head -1)
+          fi
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: no arm64-v8a or universal APK produced" >&2
+            echo "Available APKs:" >&2
+            find app/build/outputs/apk/standalone/debug -name '*.apk' -type f >&2 || true
             exit 1
           fi
+          echo "Using APK: $APK_PATH" >&2
           cp "$APK_PATH" wgtunnel-oeili.apk
           APK_SHA256=$(sha256sum wgtunnel-oeili.apk | cut -d' ' -f1)
           DATE_PART=$(date -u +%Y.%m.%d)
@@ -77,7 +89,7 @@ jobs:
           set -euo pipefail
           # Re-create the 'oeili-latest' release so the latest-download URL
           # always points at the most recent build. Ansible consumes:
-          #   https://github.com/DivMode/wgtunnel-oeili/releases/download/oeili-latest/wgtunnel-oeili.apk
+          #   https://github.com/DivMode/wgtunnel-android/releases/download/oeili-latest/wgtunnel-oeili.apk
           gh release delete oeili-latest --yes --cleanup-tag || true
           SHORT_SHA=${GITHUB_SHA:0:8}
           gh release create oeili-latest \
