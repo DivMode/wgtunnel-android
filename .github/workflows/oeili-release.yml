@@ -1,0 +1,89 @@
+name: oeili-release
+
+# wgtunnel-oeili fork — produces signed APKs for unattended phone fleets.
+# Triggered on push to oeili-main or manual dispatch. Uses the standard
+# Android debug keystore (good enough for internal sideload via adb, since
+# these APKs never go to Play Store).
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - oeili-main
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build standalone debug APK
+        run: ./gradlew :app:assembleStandaloneDebug --stacktrace
+
+      - name: Locate APK + compute metadata
+        id: locate
+        run: |
+          set -euo pipefail
+          APK_PATH=$(find app/build/outputs/apk/standalone/debug -name '*.apk' -type f | head -1)
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: no APK produced" >&2
+            exit 1
+          fi
+          cp "$APK_PATH" wgtunnel-oeili.apk
+          APK_SHA256=$(sha256sum wgtunnel-oeili.apk | cut -d' ' -f1)
+          DATE_PART=$(date -u +%Y.%m.%d)
+          SHORT_SHA=${GITHUB_SHA:0:8}
+          echo "apk_sha256=$APK_SHA256" >> "$GITHUB_OUTPUT"
+          echo "version=${DATE_PART}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag=oeili-v${DATE_PART}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag + release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.locate.outputs.tag }}
+          APK_SHA256: ${{ steps.locate.outputs.apk_sha256 }}
+        run: |
+          set -euo pipefail
+          git tag "$RELEASE_TAG"
+          git push origin "$RELEASE_TAG"
+          gh release create "$RELEASE_TAG" \
+            --title "oeili $RELEASE_TAG" \
+            --notes "Auto-built debug-signed APK." \
+            --notes "" \
+            --notes "SHA256: \`${APK_SHA256}\`" \
+            --target "$GITHUB_SHA" \
+            wgtunnel-oeili.apk
+
+      - name: Update latest pointer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APK_SHA256: ${{ steps.locate.outputs.apk_sha256 }}
+        run: |
+          set -euo pipefail
+          # Re-create the 'oeili-latest' release so the latest-download URL
+          # always points at the most recent build. Ansible consumes:
+          #   https://github.com/DivMode/wgtunnel-oeili/releases/download/oeili-latest/wgtunnel-oeili.apk
+          gh release delete oeili-latest --yes --cleanup-tag || true
+          SHORT_SHA=${GITHUB_SHA:0:8}
+          gh release create oeili-latest \
+            --title "Latest oeili build" \
+            --notes "Auto-updated pointer to the most recent build." \
+            --notes "Source SHA: \`${SHORT_SHA}\`" \
+            --notes "APK SHA256: \`${APK_SHA256}\`" \
+            --target "$GITHUB_SHA" \
+            wgtunnel-oeili.apk
