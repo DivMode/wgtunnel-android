@@ -56,16 +56,23 @@ class RestartReceiver : BroadcastReceiver(), KoinComponent {
     }
 
     /**
-     * Auto-import tunnel configs and remote-control settings from the app's
-     * external-files directory at boot / package upgrade.
+     * Auto-import tunnel configs and remote-control settings from a watched
+     * directory at boot / package upgrade.
      *
-     * Drop configs from a host machine via:
-     *   adb push file.conf /sdcard/Android/data/com.zaneschepke.wireguardautotunnel/files/oeili-configs/
+     * Two locations are checked, INTERNAL first, EXTERNAL fallback:
+     *   1. /data/data/<pkg>/files/oeili-configs/   (internal, app-private)
+     *      Push via: adb shell run-as <pkg> sh -c "cat > files/oeili-configs/<name>"
+     *      Files land owned by the app's UID — fully readable by the app.
+     *   2. /sdcard/Android/data/<pkg>/files/oeili-configs/  (external)
+     *      Push via: adb push <file> /sdcard/Android/data/<pkg>/files/oeili-configs/
+     *      Files land owned by `shell` UID. The app's UID may not be in the
+     *      `ext_data_rw` group on all firmware variants, so reads can fail.
+     *      External is the fallback for non-debuggable builds where `run-as`
+     *      isn't available.
      *
-     * The directory is scoped storage on Android 11+, writable by ADB shell
-     * without READ_EXTERNAL_STORAGE/MANAGE_EXTERNAL_STORAGE permissions.
      * Idempotent — every tunnel goes through saveTunnelsUniquely which dedups
-     * by name.
+     * by name. Logs the directory it ended up reading from so debugging
+     * provisioning issues from logcat is possible.
      *
      * Optional: drop oeili-remote-key.txt in the same dir to set the
      * RemoteControl security key + enable remote control with no UI. Lets a
@@ -73,9 +80,17 @@ class RestartReceiver : BroadcastReceiver(), KoinComponent {
      * key for unattended operations.
      */
     private suspend fun autoImportFromExternalFiles(context: Context) {
-        val baseDir = context.getExternalFilesDir(null) ?: return
-        val configDir = File(baseDir, OEILI_CONFIG_DIR)
-        if (!configDir.exists()) return
+        val internalDir = File(context.filesDir, OEILI_CONFIG_DIR)
+        val externalDir = context.getExternalFilesDir(null)?.let { File(it, OEILI_CONFIG_DIR) }
+        val configDir = when {
+            internalDir.exists() && (internalDir.listFiles()?.isNotEmpty() == true) -> internalDir
+            externalDir != null && externalDir.exists() -> externalDir
+            else -> {
+                Timber.d("oeili auto-import: no oeili-configs dir at internal or external paths")
+                return
+            }
+        }
+        Timber.i("oeili auto-import: scanning ${configDir.absolutePath}")
         try {
             val confFiles =
                 configDir.listFiles { f -> f.isFile && f.extension == "conf" } ?: emptyArray()
