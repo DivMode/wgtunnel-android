@@ -3,7 +3,9 @@ package com.zaneschepke.wireguardautotunnel
 import android.app.Application
 import android.os.StrictMode
 import com.zaneschepke.logcatter.LogReader
+import com.zaneschepke.wireguardautotunnel.core.broadcast.OeiliAutoImporter
 import com.zaneschepke.wireguardautotunnel.core.notification.NotificationMonitor
+import com.zaneschepke.wireguardautotunnel.core.tunnel.TunnelManager
 import com.zaneschepke.wireguardautotunnel.di.Dispatcher
 import com.zaneschepke.wireguardautotunnel.di.Scope
 import com.zaneschepke.wireguardautotunnel.di.appModule
@@ -12,7 +14,9 @@ import com.zaneschepke.wireguardautotunnel.di.dispatchersModule
 import com.zaneschepke.wireguardautotunnel.di.networkModule
 import com.zaneschepke.wireguardautotunnel.di.tunnelModule
 import com.zaneschepke.wireguardautotunnel.di.workerModule
+import com.zaneschepke.wireguardautotunnel.domain.repository.GeneralSettingRepository
 import com.zaneschepke.wireguardautotunnel.domain.repository.MonitoringSettingsRepository
+import com.zaneschepke.wireguardautotunnel.domain.repository.TunnelRepository
 import com.zaneschepke.wireguardautotunnel.util.ReleaseTree
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +44,9 @@ class WireGuardAutoTunnel : Application(), KoinComponent {
 
     private val monitoringRepository: MonitoringSettingsRepository by inject()
     private val notificationMonitor: NotificationMonitor by inject()
+    private val tunnelRepository: TunnelRepository by inject()
+    private val settingsRepository: GeneralSettingRepository by inject()
+    private val tunnelManager: TunnelManager by inject()
 
     override fun onCreate() {
         super.onCreate()
@@ -79,6 +86,14 @@ class WireGuardAutoTunnel : Application(), KoinComponent {
                     }
             }
             launch { notificationMonitor.handleApplicationNotifications() }
+            launch {
+                val changed = OeiliAutoImporter.run(
+                    this@WireGuardAutoTunnel,
+                    tunnelRepository,
+                    settingsRepository,
+                )
+                if (changed) tunnelManager.handleReboot()
+            }
         }
     }
 
