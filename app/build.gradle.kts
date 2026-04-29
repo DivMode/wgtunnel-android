@@ -83,7 +83,13 @@ android {
         }
 
         debug {
-            applicationIdSuffix = ".debug"
+            // oeili fork: drop applicationIdSuffix so debug builds carry the
+            // unsuffixed package id `com.zaneschepke.wireguardautotunnel`.
+            // Our CI publishes only debug-signed APKs (no release keystore
+            // configured) and we need the package id to match the broadcast
+            // receiver paths + the external-files watch directory the
+            // RestartReceiver auto-import uses. Provider name kept distinct
+            // to avoid collision if a release ever coexists.
             resValue("string", "app_name", "WG Tunnel Debug")
             isDebuggable = true
             resValue("string", "provider", "\"${Constants.APP_NAME}.provider.debug\"")
