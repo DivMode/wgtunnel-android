@@ -39,8 +39,14 @@ jobs:
       # The .so we produce is dropped into app/src/main/jniLibs/ so it
       # wins over the one bundled in the amneziawg-android Maven AAR.
       - name: Set up Rust toolchain (aarch64-linux-android)
-        uses: dtolnay/rust-toolchain@stable
+        # Pin to the same channel gotatun's rust-toolchain.toml requires.
+        # If we install `stable` here, cargo inside /tmp/gotatun reads the
+        # toolchain file and switches to 1.88.0 — but the android target
+        # is only installed for `stable`, so the cross-compile fails with
+        # "can't find crate for `core`".
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.88.0"
           targets: aarch64-linux-android
 
       - name: Cache Cargo registry + target
