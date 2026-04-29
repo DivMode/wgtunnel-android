@@ -72,15 +72,22 @@ jobs:
       - name: Build libam-go.so via cargo-ndk
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          # cargo-ndk also reads ANDROID_NDK_ROOT — keep it consistent with
+          # ANDROID_NDK_HOME or it logs a warning and may pick the runner's
+          # pre-installed NDK instead of the version we set up.
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           set -euo pipefail
           cd /tmp/gotatun
-          cargo ndk -t arm64-v8a -p 24 -- build \
+          # cargo-ndk 4.x: `-t` is target, `--platform` is the NDK API
+          # level. (`-p` is forwarded to the inner `cargo` invocation —
+          # passing it to cargo-ndk gives "unknown package: 24".)
+          # API 24 = Android 7.0 Nougat, the minSdk wgtunnel-android targets.
+          cargo ndk -t arm64-v8a --platform 24 -- build \
             -p gotatun-android-jni --release --no-default-features
           # cargo's [lib].name = "am_go" produces libam_go.so but the
           # Kotlin side calls ReLinker.loadLibrary(context, "am-go") which
-          # looks for libam-go.so. Rename on copy. Also `cargo ndk -t arm64-v8a`
-          # outputs to target/aarch64-linux-android/release/.
+          # looks for libam-go.so. Rename on copy.
           mkdir -p "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a"
           cp target/aarch64-linux-android/release/libam_go.so \
              "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libam-go.so"
