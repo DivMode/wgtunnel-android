@@ -39,18 +39,21 @@ jobs:
         id: locate
         run: |
           set -euo pipefail
-          # Pick the arm64-v8a variant explicitly — Pixel 7 / Pixel 8 /
-          # Galaxy S24+ / S26+ are all 64-bit-only (Tensor G2+ and SD 8 Gen 2+
-          # dropped armeabi-v7a support on Android 13+). The standalone flavor
-          # builds per-ABI APKs; an alphabetical `head -1` picks armeabi-v7a,
-          # which fails to install on those phones with
-          # INSTALL_FAILED_NO_MATCHING_ABIS / res=-113.
-          APK_PATH=$(find app/build/outputs/apk/standalone/debug -name '*arm64-v8a*.apk' -type f | head -1)
+          # WG Tunnel's standalone flavor produces three APKs:
+          #   wgtunnel-standalone-vX.Y.Z.apk         (universal, all ABIs)
+          #   wgtunnel-standalone-vX.Y.Z-arm64.apk   (64-bit only)
+          #   wgtunnel-standalone-vX.Y.Z-armv7.apk   (32-bit only)
+          # Prefer the universal one — fits Pixel 7 (arm64), Pixel 8 (arm64),
+          # Galaxy S24+/S26+ (arm64), and any 32-bit phone we'd ever add. Slight
+          # size cost (~+10MB) for one-pin-fits-all simplicity. Fall back to
+          # arm64 if the build ever drops the universal variant.
+          APK_PATH=$(find app/build/outputs/apk/standalone/debug -name '*.apk' -type f \
+            ! -name '*-arm*' ! -name '*-x86*' | head -1)
           if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find app/build/outputs/apk/standalone/debug -name '*universal*.apk' -type f | head -1)
+            APK_PATH=$(find app/build/outputs/apk/standalone/debug -name '*-arm64*.apk' -type f | head -1)
           fi
           if [ -z "$APK_PATH" ]; then
-            echo "ERROR: no arm64-v8a or universal APK produced" >&2
+            echo "ERROR: no universal or arm64 APK produced" >&2
             echo "Available APKs:" >&2
             find app/build/outputs/apk/standalone/debug -name '*.apk' -type f >&2 || true
             exit 1
