@@ -79,11 +79,35 @@ object OeiliAutoImporter {
                             .onFailure { Timber.w(it, "oeili auto-import: failed to parse ${f.name}") }
                             .getOrNull()
                     }
-                val existing = tunnelRepository.getAll().map { it.name }
-                val incoming = parsed.filterNot { it.name in existing }
-                if (incoming.isNotEmpty()) {
-                    tunnelRepository.saveTunnelsUniquely(incoming, existing)
-                    Timber.i("oeili auto-import: imported ${incoming.size} tunnel(s)")
+                // Upsert by name. If a tunnel with the same name exists, copy
+                // its id + isPrimaryTunnel into the new config and save —
+                // Room's @Upsert updates the row in place. This makes
+                // re-deploys idempotent and lets ops push a new endpoint /
+                // peer key by simply rewriting the .conf file.
+                val newImports = mutableListOf<TunnelConfig>()
+                val updates = mutableListOf<TunnelConfig>()
+                for (incoming in parsed) {
+                    val existing = tunnelRepository.findByTunnelName(incoming.name)
+                    if (existing == null) {
+                        newImports += incoming
+                    } else if (existing.wgQuick != incoming.wgQuick ||
+                               existing.amQuick != incoming.amQuick) {
+                        updates += incoming.copy(
+                            id = existing.id,
+                            isPrimaryTunnel = existing.isPrimaryTunnel,
+                            isActive = existing.isActive,
+                        )
+                    }
+                }
+                if (newImports.isNotEmpty()) {
+                    val existingNames = tunnelRepository.getAll().map { it.name }
+                    tunnelRepository.saveTunnelsUniquely(newImports, existingNames)
+                    Timber.i("oeili auto-import: imported ${newImports.size} new tunnel(s)")
+                    changed = true
+                }
+                for (update in updates) {
+                    tunnelRepository.save(update)
+                    Timber.i("oeili auto-import: updated tunnel ${update.name} (config changed)")
                     changed = true
                 }
                 if (tunnelRepository.getDefaultTunnel() == null) {
